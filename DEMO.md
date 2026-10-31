@@ -63,3 +63,4 @@ RabbitHole turns any company, claim, or relationship into an immutable, evidence
   *A:* VC analysts, investigative journalists, compliance teams, and competitive intelligence researchers.
 - **Q: Can it run on private intranets?**
   *A:* Yes, the document ingestion pipeline works entirely on local files without external search.
+
