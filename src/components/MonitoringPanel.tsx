@@ -4,10 +4,10 @@ import { api } from "./api";
 import { Button } from "./ui/button";
 
 const SCHEDULE_OPTIONS = [
-  { value: 0, label: "Off", desc: "No automated monitoring" },
-  { value: 6, label: "Every 6 hours", desc: "Checks for updates in the past 6 hours" },
-  { value: 24, label: "Daily (24h)", desc: "Daily summary of all changes" },
-  { value: 168, label: "Weekly", desc: "Weekly comprehensive digest" },
+  { value: 0, label: "Off", tooltip: "Disabled" },
+  { value: 6, label: "6 Hours", tooltip: "Every 6 hours" },
+  { value: 24, label: "Daily", tooltip: "Every 24 hours" },
+  { value: 168, label: "Weekly", tooltip: "Every 7 days" },
 ];
 
 export function MonitoringPanel({
@@ -26,7 +26,7 @@ export function MonitoringPanel({
   const [last, setLast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     api(`/investigations/${invId}/watch`)
@@ -40,7 +40,7 @@ export function MonitoringPanel({
 
   async function save(h: number, webhookUrl = hook) {
     setSaving(true);
-    setSaveSuccess(false);
+    setSaved(false);
     try {
       const w = await api(`/investigations/${invId}/watch`, {
         method: "PUT",
@@ -48,10 +48,10 @@ export function MonitoringPanel({
       });
       setHours(w.hours);
       setLast(w.lastWatchAt);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2000);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
     } catch (e: any) {
-      onError(e.message || "Failed to update monitoring schedule");
+      onError(e.message || "Failed to update watch schedule");
     } finally {
       setSaving(false);
     }
@@ -69,98 +69,79 @@ export function MonitoringPanel({
     }
   }
 
-  const selectedOpt = SCHEDULE_OPTIONS.find((o) => o.value === hours) || SCHEDULE_OPTIONS[0];
-
   return (
-    <div className="flex flex-col gap-3 p-3 bg-white/80 border border-[var(--line)] rounded-xl shadow-xs">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wider text-[var(--ink)]/70">
-          Automated Watch
-        </span>
-        {hours > 0 ? (
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            Active
-          </span>
-        ) : (
-          <span className="text-[11px] text-[var(--mute)]">Disabled</span>
-        )}
-      </div>
-
-      {/* Interval Selector Buttons */}
-      <div className="grid grid-cols-2 gap-1.5">
+    <div className="flex flex-col gap-2.5">
+      {/* Segmented schedule bar (fits natural sidebar flow, no card container) */}
+      <div className="flex items-center p-0.5 bg-[var(--soft)] rounded-lg border border-[var(--line)]">
         {SCHEDULE_OPTIONS.map((opt) => {
           const isSelected = hours === opt.value;
           return (
             <button
               key={opt.value}
               type="button"
+              disabled={saving}
               onClick={() => {
                 setHours(opt.value);
                 save(opt.value);
               }}
-              disabled={saving}
-              className={`control-40 px-2.5 text-xs font-semibold rounded-lg border transition-all text-left flex flex-col justify-center ${
+              title={opt.tooltip}
+              className={`flex-1 py-1.5 px-1 text-xs font-semibold rounded-md transition-all text-center ${
                 isSelected
-                  ? "bg-[var(--acc)] text-white border-[var(--acc)] shadow-xs"
-                  : "bg-white text-[var(--ink)]/80 border-[var(--line2)] hover:bg-[var(--soft)] hover:border-[var(--dim)]"
+                  ? "bg-[var(--paper)] text-[var(--acc)] shadow-xs"
+                  : "text-[var(--mute)] hover:text-[var(--ink)]"
               }`}
+              style={{
+                border: isSelected ? "1px solid var(--line2)" : "1px solid transparent",
+              }}
             >
-              <span className="truncate leading-tight">{opt.label}</span>
+              {opt.label}
             </button>
           );
         })}
       </div>
 
-      <p className="text-[11px] text-[var(--mute)] leading-relaxed">
-        {selectedOpt.desc}
-      </p>
-
-      {/* Slack Webhook Input */}
+      {/* Webhook input when watch is enabled */}
       {hours > 0 && (
-        <div className="flex flex-col gap-1 mt-1">
-          <label className="text-[11px] font-medium text-[var(--ink)]/70">
-            Slack Webhook Destination
-          </label>
+        <div className="flex flex-col gap-1">
           <input
-            placeholder="https://hooks.slack.com/services/..."
+            placeholder="Slack webhook URL (https://...)"
             value={hook}
             onChange={(e) => setHook(e.target.value)}
             onBlur={() => save(hours, hook)}
-            className="control-40 text-xs px-3 bg-white border border-[var(--line2)] rounded-lg focus:border-[var(--acc)]"
+            className="w-full text-xs"
           />
-          <span className="text-[10px] text-[var(--mute)]">
-            Dispatches rich Slack Block Kit reports with sources & stats.
-          </span>
         </div>
       )}
 
-      {/* Last checked indicator */}
+      {/* Status info line */}
+      <div className="flex items-center justify-between text-[11px] text-[var(--mute)] px-0.5">
+        <span>
+          {hours === 0
+            ? "Automated alerts off"
+            : hours === 6
+            ? "Scans every 6h & sends to Slack"
+            : hours === 24
+            ? "Daily digest sent to Slack"
+            : "Weekly digest sent to Slack"}
+        </span>
+        {saved && <span className="text-emerald-600 font-semibold">✓ Saved</span>}
+      </div>
+
       {last && (
-        <div className="text-[10px] text-[var(--mute)] flex items-center justify-between border-t border-[var(--line)] pt-2 mt-1">
-          <span>Last run:</span>
-          <span className="font-medium text-[var(--ink)]/80">
-            {new Date(last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })},{" "}
-            {new Date(last).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-          </span>
+        <div className="text-[10px] text-[var(--mute)] px-0.5">
+          Last checked: {new Date(last).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })},{" "}
+          {new Date(last).toLocaleDateString([], { month: "short", day: "numeric" })}
         </div>
       )}
 
-      {/* Action Trigger */}
+      {/* Clean button */}
       <Button
         full
         disabled={busy || checking}
         onClick={handleCheckNow}
-        className="mt-1 font-semibold"
       >
-        {checking ? "Scanning & Notifying..." : "Check now & Send to Slack"}
+        {checking ? "Checking & Notifying…" : "Check now & Send to Slack"}
       </Button>
-
-      {saveSuccess && (
-        <span className="text-[10px] text-emerald-600 text-center font-medium">
-          ✓ Schedule updated
-        </span>
-      )}
     </div>
   );
 }
