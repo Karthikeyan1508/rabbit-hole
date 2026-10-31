@@ -41,10 +41,13 @@ export function WorkspaceShell({ investigationId, onBack }: WorkspaceShellProps)
         setError(null);
         const res = await fetch(`/api/v1/investigations/${investigationId}/graph`);
         if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData?.error?.message || 'Failed to fetch graph data');
+          const errText = await res.text().catch(() => "");
+          let errData: any = {};
+          try { errData = errText ? JSON.parse(errText) : {}; } catch {}
+          throw new Error(errData?.error?.message || errText || 'Failed to fetch graph data');
         }
-        const json = await res.json();
+        const text = await res.text();
+        const json = text ? JSON.parse(text) : {};
         setData(json);
         if (json.nodes && json.nodes.length > 0) {
           setSelectedNode(json.nodes[0]);

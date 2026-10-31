@@ -11,7 +11,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const b = z.object({ subject: z.string().trim().min(1).max(200), type: z.string().default("Company") }).safeParse(await req.json().catch(() => null));
-  if (!b.success) return err(422, "INVALID_CONFIG", "subject required");
-  return Response.json(await createInvestigation(b.data.subject, b.data.type), { status: 201 });
+  try {
+    const raw = await req.json().catch(() => null);
+    const b = z.object({ subject: z.string().trim().min(1).max(200), type: z.string().default("Company") }).safeParse(raw);
+    if (!b.success) return err(422, "INVALID_CONFIG", "subject required");
+    const res = await createInvestigation(b.data.subject, b.data.type);
+    return Response.json(res, { status: 201 });
+  } catch (e: any) {
+    console.error("POST /investigations failed:", e);
+    return err(500, "INTERNAL_ERROR", e.message || String(e));
+  }
 }
