@@ -1,12 +1,9 @@
 import type { NextConfig } from 'next';
-import path from 'node:path';
 
 const nextConfig: NextConfig = {
+  // Enforce single CPU core usage during build as requested
+  cpus: 1,
   reactStrictMode: true,
-  outputFileTracingRoot: path.resolve(__dirname),
-  experimental: {
-    cpus: 1,
-  },
 };
 
 export default nextConfig;
