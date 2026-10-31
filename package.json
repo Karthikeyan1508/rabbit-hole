@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test test/db.test.ts"
+    "test": "node --experimental-strip-types --test test/db.test.ts test/pipeline.test.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
