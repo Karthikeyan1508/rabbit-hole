@@ -11,6 +11,22 @@ function open() {
   const have = db.prepare("pragma table_info(investigations)").all().map((c: any) => c.name);
   for (const [n, t] of [["watch_hours", "int not null default 0"], ["watch_webhook", "text"], ["last_watch_at", "text"]])
     if (!have.includes(n)) db.exec(`alter table investigations add column ${n} ${t}`);
+  
+  // Seed demo data if database is empty
+  try {
+    const count = (db.prepare("select count(*) as c from investigations").all()[0] as any)?.c ?? 0;
+    if (count === 0) {
+      const fs = require("fs");
+      const path = require("path");
+      const seedFile = path.join(__dirname, "seed.sql");
+      if (fs.existsSync(seedFile)) {
+        db.exec(fs.readFileSync(seedFile, "utf8"));
+      }
+    }
+  } catch (e) {
+    console.warn("Auto-seed skipped:", e);
+  }
+
   return db;
 }
 
@@ -46,7 +62,8 @@ const NOW = "text default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
 const SCHEMA = `
 create table if not exists investigations (
   id ${ID}, owner_id text, title text not null, root_subject text not null,
-  version int not null default 0, created_at ${NOW}, updated_at ${NOW});
+  version int not null default 0, created_at ${NOW}, updated_at ${NOW},
+  watch_hours int not null default 0, watch_webhook text, last_watch_at text);
 create table if not exists graph_nodes (
   id ${ID}, investigation_id text not null references investigations(id) on delete cascade,
   canonical_key text not null, type text not null, label text not null, properties text default '{}',
