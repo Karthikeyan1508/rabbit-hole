@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { motion } from "motion/react";
 import { api } from "./api";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -61,9 +62,10 @@ export function MonitoringPanel({
     }
   }
 
-  function handleToggle(newOn: boolean) {
-    setEnabled(newOn);
-    saveWatchConfig(newOn, hours, hook);
+  function handleToggle() {
+    const nextState = !enabled;
+    setEnabled(nextState);
+    saveWatchConfig(nextState, hours, hook);
   }
 
   async function handleCheckNow() {
@@ -79,45 +81,37 @@ export function MonitoringPanel({
   }
 
   return (
-    <div className="flex flex-col gap-2.5">
-      {/* 1. On / Off Switch */}
+    <div className="flex flex-col gap-3">
+      {/* 1. Aceternity-style Animated Switch */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-[var(--ink)]">
+        <span className="text-sm font-semibold text-[var(--ink)]">
           Continuous Monitoring
         </span>
-        <div className="inline-flex rounded-lg border border-[var(--line2)] p-0.5 bg-[var(--soft)]">
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => handleToggle(false)}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              !enabled
-                ? "bg-[var(--paper)] text-[var(--ink)] shadow-xs"
-                : "text-[var(--mute)] hover:text-[var(--ink)]"
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={saving}
+          onClick={handleToggle}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+            enabled ? "bg-[var(--acc)]" : "bg-[var(--line2)]"
+          }`}
+        >
+          <motion.span
+            layout
+            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+              enabled ? "translate-x-5" : "translate-x-0"
             }`}
-          >
-            Off
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => handleToggle(true)}
-            className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-              enabled
-                ? "bg-[var(--acc)] text-white shadow-xs"
-                : "text-[var(--mute)] hover:text-[var(--ink)]"
-            }`}
-          >
-            On
-          </button>
-        </div>
+          />
+        </button>
       </div>
 
       {/* 2. When ON: Show Slack Webhook URL + Interval Dropdown */}
       {enabled && (
-        <div className="flex flex-col gap-2 mt-1">
+        <div className="flex flex-col gap-2.5 mt-0.5">
           <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-medium text-[var(--ink)]/70">
+            <label className="text-xs font-semibold text-[var(--ink)]">
               Slack Webhook URL
             </label>
             <input
@@ -125,12 +119,12 @@ export function MonitoringPanel({
               value={hook}
               onChange={(e) => setHook(e.target.value)}
               onBlur={() => saveWatchConfig(true, hours, hook)}
-              className="control-40 text-xs px-3 bg-[var(--paper)] border border-[var(--line2)] rounded-lg focus:border-[var(--acc)]"
+              className="control-40 text-sm px-3.5 bg-[var(--paper)] border border-[var(--line2)] rounded-lg focus:border-[var(--acc)] text-[var(--ink)] placeholder:text-[var(--mute)]"
             />
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-medium text-[var(--ink)]/70">
+            <label className="text-xs font-semibold text-[var(--ink)]">
               Check Frequency
             </label>
             <Select
@@ -146,17 +140,17 @@ export function MonitoringPanel({
       )}
 
       {/* Status info & Last check */}
-      <div className="flex items-center justify-between text-[11px] text-[var(--mute)] px-0.5">
+      <div className="flex items-center justify-between text-xs text-[var(--mute)] px-0.5">
         <span>
           {enabled
-            ? `Active · Scans every ${hours === 24 ? "day" : hours === 168 ? "week" : `${hours}h`}`
+            ? `Active · Scans every ${hours === 24 ? "day" : hours === 168 ? "week" : `${hours} hours`}`
             : "Automated alerts disabled"}
         </span>
-        {saved && <span className="text-emerald-600 font-semibold">✓ Saved</span>}
+        {saved && <span className="text-emerald-600 font-semibold text-xs">✓ Saved</span>}
       </div>
 
       {last && (
-        <div className="text-[10px] text-[var(--mute)] px-0.5">
+        <div className="text-xs text-[var(--mute)] px-0.5">
           Last scan: {new Date(last).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })},{" "}
           {new Date(last).toLocaleDateString([], { month: "short", day: "numeric" })}
         </div>
@@ -167,7 +161,7 @@ export function MonitoringPanel({
         full
         disabled={busy || checking}
         onClick={handleCheckNow}
-        className="mt-1"
+        className="mt-0.5 text-sm font-semibold"
       >
         {checking ? "Checking & Notifying…" : "Check now & Send to Slack"}
       </Button>
