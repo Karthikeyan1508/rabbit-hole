@@ -1,145 +1,53 @@
-import { getTinyFishKeyPool } from './key-rotation.ts';
+import { keyring } from "./keyring";
 
-export interface TinyFishSearchResult {
-  title?: string;
-  url: string;
-  description?: string;
-}
+// Keys rotate (TINYFISH_API_KEYS=k1,k2,k3). A run belongs to the key that started it, so polling/cancel reuse that key.
+const keys = keyring("TINYFISH_API_KEYS", "TINYFISH_API_KEY");
+const runKey = new Map<string, string>();
 
-export interface TinyFishFetchItemResult {
-  url: string;
-  status?: number;
-  markdown?: string;
-  content?: string;
-  error?: string;
-}
-
-/**
- * Searches using TinyFish Search API.
- * GET https://api.search.tinyfish.ai?query=...
- */
-export async function tinyfishSearch(query: string): Promise<TinyFishSearchResult[]> {
-  const pool = getTinyFishKeyPool();
-  const maxAttempts = Math.max(pool.count, 1);
-
-  for (let i = 0; i < maxAttempts; i++) {
-    const key = pool.getKey();
-    const headers: Record<string, string> = {};
-    if (key) {
-      headers['X-API-Key'] = key;
-    }
-
-    try {
-      const url = `https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`;
-      const res = await fetch(url, { headers });
-
-      if (!res.ok) {
-        if ([401, 402, 403, 429].includes(res.status)) {
-          if (key) pool.markFailed(key);
-        }
-        throw new Error(`TinyFish Search HTTP ${res.status}`);
-      }
-
-      if (key) pool.markSuccess(key);
-      const data = await res.json();
-      return Array.isArray(data) ? data : data.results || [];
-    } catch (err) {
-      if (i === maxAttempts - 1) throw err;
-    }
+async function call(url: string, init: RequestInit = {}, only?: string) {
+  const order = only ? [only] : keys.ordered();
+  if (!order.length) throw new Error("No TINYFISH_API_KEY configured");
+  let res!: Response;
+  let used = order[0];
+  for (const key of order) {
+    used = key;
+    res = await fetch(url, { ...init, headers: { "X-API-Key": key, "Content-Type": "application/json" } });
+    if (![401, 402, 403, 429].includes(res.status)) break; // auth, billing or rate limit: try the next key
+    keys.bad(key, res.status === 429 ? 60_000 : 3_600_000);
   }
-
-  return [];
+  return { res, key: used };
 }
 
-/**
- * Fetches URLs using TinyFish Fetch API.
- * POST https://api.fetch.tinyfish.ai
- * Body: {"urls":["..."],"format":"markdown"}
- */
-export async function tinyfishFetch(urls: string[]): Promise<TinyFishFetchItemResult[]> {
-  if (urls.length === 0) return [];
-
-  const pool = getTinyFishKeyPool();
-  const maxAttempts = Math.max(pool.count, 1);
-
-  for (let i = 0; i < maxAttempts; i++) {
-    const key = pool.getKey();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (key) {
-      headers['X-API-Key'] = key;
-    }
-
-    try {
-      const res = await fetch('https://api.fetch.tinyfish.ai', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          urls,
-          format: 'markdown',
-        }),
-      });
-
-      if (!res.ok) {
-        if ([401, 402, 403, 429].includes(res.status)) {
-          if (key) pool.markFailed(key);
-        }
-        throw new Error(`TinyFish Fetch HTTP ${res.status}`);
-      }
-
-      if (key) pool.markSuccess(key);
-      const data = await res.json();
-      return Array.isArray(data) ? data : data.results || [];
-    } catch (err) {
-      if (i === maxAttempts - 1) throw err;
-    }
-  }
-
-  return [];
-}
-
-/**
- * TinyFish Agent client with key-locking.
- */
-export async function tinyfishAgentRun(instruction: string): Promise<{ runId: string; apiKeyUsed: string | null }> {
-  const pool = getTinyFishKeyPool();
-  const key = pool.getKey();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (key) headers['X-API-Key'] = key;
-
-  const res = await fetch('https://agent.tinyfish.ai/v1/automation/run-async', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ instruction }),
-  });
-
-  if (!res.ok) {
-    if (key && [401, 402, 403, 429].includes(res.status)) pool.markFailed(key);
-    throw new Error(`TinyFish Agent Run HTTP ${res.status}`);
-  }
-
-  const data = await res.json();
-  return { runId: data.id || data.runId, apiKeyUsed: key };
-}
-
-export async function tinyfishAgentPoll(runId: string, apiKey: string | null): Promise<any> {
-  const headers: Record<string, string> = {};
-  if (apiKey) headers['X-API-Key'] = apiKey;
-
-  const res = await fetch(`https://agent.tinyfish.ai/v1/runs/${runId}`, { headers });
-  if (!res.ok) throw new Error(`TinyFish Agent Poll HTTP ${res.status}`);
+async function j(res: Response) {
+  if (!res.ok) throw new Error(`TinyFish ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();
 }
 
-export async function tinyfishAgentCancel(runId: string, apiKey: string | null): Promise<any> {
-  const headers: Record<string, string> = {};
-  if (apiKey) headers['X-API-Key'] = apiKey;
+export type Hit = { url: string; title?: string; snippet?: string };
 
-  const res = await fetch(`https://agent.tinyfish.ai/v1/runs/${runId}/cancel`, {
-    method: 'POST',
-    headers,
-  });
-  if (!res.ok) throw new Error(`TinyFish Agent Cancel HTTP ${res.status}`);
-  return res.json();
+export async function search(query: string): Promise<Hit[]> {
+  const r = await j((await call(`https://api.search.tinyfish.ai?query=${encodeURIComponent(query)}`)).res);
+  return r.results ?? [];
 }
+
+export type Page = { url: string; final_url?: string; title?: string; text: string };
+
+export async function fetchPages(urls: string[]): Promise<{ results: Page[]; errors: { url: string; error: string }[] }> {
+  const r = await j((await call("https://api.fetch.tinyfish.ai", {
+    method: "POST", body: JSON.stringify({ urls: urls.slice(0, 10), format: "markdown" }),
+  })).res);
+  return { results: (r.results ?? []).filter((p: Page) => typeof p.text === "string"), errors: r.errors ?? [] };
+}
+
+export async function startRun(url: string, goal: string, maxSeconds: number): Promise<string> {
+  const { res, key } = await call("https://agent.tinyfish.ai/v1/automation/run-async", {
+    method: "POST", body: JSON.stringify({ url, goal, agent_config: { max_duration_seconds: maxSeconds } }),
+  });
+  const r = await j(res);
+  if (!r.run_id) throw new Error(`TinyFish run not created: ${JSON.stringify(r.error)}`);
+  runKey.set(r.run_id, key);
+  return r.run_id;
+}
+
+export const getRun = async (id: string) => j((await call(`https://agent.tinyfish.ai/v1/runs/${id}`, {}, runKey.get(id))).res);
+export const cancelRun = async (id: string) => j((await call(`https://agent.tinyfish.ai/v1/runs/${id}/cancel`, { method: "POST" }, runKey.get(id))).res);

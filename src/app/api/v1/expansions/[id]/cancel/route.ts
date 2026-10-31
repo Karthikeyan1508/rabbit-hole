@@ -1,49 +1,20 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { qOne, qRun } from '@/lib/db';
-import { apiError } from '@/lib/errors';
-import { emitEvent } from '@/lib/events';
+import { q } from "@/lib/db";
+import { err, isUuid } from "@/lib/http";
+import { emit, running, TERMINAL } from "@/lib/worker";
 
-export async function POST(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: jobId } = await context.params;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-    const job = qOne<{ id: string; status: string }>(
-      `SELECT id, status FROM expansion_jobs WHERE id = $1`,
-      jobId
-    );
-
-    if (!job) {
-      return apiError('Expansion job not found', 404, 'NOT_FOUND', false);
-    }
-
-    const terminalStatuses = new Set(['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED']);
-    if (terminalStatuses.has(job.status)) {
-      return NextResponse.json({
-        id: jobId,
-        status: job.status,
-        message: 'Job is already in a terminal state',
-      });
-    }
-
-    // Set cancel_requested flag and notify
-    qRun(
-      `UPDATE expansion_jobs SET cancel_requested = 1, updated_at = $1 WHERE id = $2`,
-      new Date().toISOString(),
-      jobId
-    );
-
-    emitEvent(jobId, 'expansion.cancelled', { reason: 'cancel_requested_by_user' });
-
-    return NextResponse.json({
-      id: jobId,
-      status: 'CANCELLING',
-      message: 'Cancellation requested successfully',
-    });
-  } catch (error: any) {
-    return apiError(error?.message || 'Failed to cancel job', 500, 'INTERNAL_SERVER_ERROR', true);
+export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!isUuid(id)) return err(404, "NOT_FOUND", "Expansion not found");
+  const [j] = await q("select status from expansion_jobs where id=$1", [id]);
+  if (!j) return err(404, "NOT_FOUND", "Expansion not found");
+  if (TERMINAL.includes(j.status)) return Response.json({ expansionId: id, status: j.status });
+  await q("update expansion_jobs set cancel_requested=true where id=$1", [id]);
+  if (!running.has(id)) { // orphaned job: no worker will ever confirm, so terminate it here
+    await q("update expansion_jobs set status='CANCELLED', finished_at=(strftime('%Y-%m-%dT%H:%M:%fZ','now')) where id=$1", [id]);
+    await emit(id, "expansion.cancelled");
   }
+  return Response.json({ expansionId: id, status: "CANCELLING" });
 }
-

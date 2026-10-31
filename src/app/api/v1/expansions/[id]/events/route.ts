@@ -1,138 +1,37 @@
-import { NextRequest } from 'next/server';
-import { q, qOne } from '@/lib/db';
-import { subscribeToJob } from '@/lib/events';
-import { apiError } from '@/lib/errors';
+import { q } from "@/lib/db";
+import { err, isUuid } from "@/lib/http";
+import { TERMINAL } from "@/lib/worker";
 
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
-  const { id: jobId } = await context.params;
+/** Replays persisted events after Last-Event-ID, then tails the table until the job is terminal. */
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!isUuid(id)) return err(404, "NOT_FOUND", "Expansion not found");
+  const [job] = await q("select status from expansion_jobs where id=$1", [id]);
+  if (!job) return err(404, "NOT_FOUND", "Expansion not found");
 
-  const job = qOne<{ id: string; status: string }>(
-    `SELECT id, status FROM expansion_jobs WHERE id = $1`,
-    jobId
-  );
-  if (!job) {
-    return apiError('Expansion job not found', 404, 'NOT_FOUND', false);
-  }
-
-  // Parse Last-Event-ID header or query parameter
-  const lastEventIdHeader = req.headers.get('last-event-id');
-  const { searchParams } = new URL(req.url);
-  const lastEventIdParam = searchParams.get('lastEventId');
-  const lastEventIdStr = lastEventIdHeader || lastEventIdParam;
-
-  let lastSequence = 0;
-  if (lastEventIdStr) {
-    const existingEvt = qOne<{ sequence_number: number }>(
-      `SELECT sequence_number FROM expansion_events WHERE id = $1`,
-      lastEventIdStr
-    );
-    if (existingEvt) {
-      lastSequence = existingEvt.sequence_number;
-    }
-  }
-
+  let last = Number(req.headers.get("last-event-id") ?? new URL(req.url).searchParams.get("last") ?? 0) || 0;
+  const enc = new TextEncoder();
+  let closed = false;
   const stream = new ReadableStream({
-    start(controller) {
-      const encoder = new TextEncoder();
-
-      function sendEvent(data: { id: string; eventType: string; payload: any }) {
-        const payloadStr = JSON.stringify(data.payload);
-        const msg = `id: ${data.id}\nevent: ${data.eventType}\ndata: ${payloadStr}\n\n`;
-        controller.enqueue(encoder.encode(msg));
-      }
-
-      function sendComment(comment: string) {
-        controller.enqueue(encoder.encode(`: ${comment}\n\n`));
-      }
-
-      // 1. Replay historical events after lastSequence
-      const historicalEvents = q<{
-        id: string;
-        sequence_number: number;
-        event_type: string;
-        payload: any;
-      }>(
-        `SELECT id, sequence_number, event_type, payload 
-         FROM expansion_events 
-         WHERE job_id = $1 AND sequence_number > $2 
-         ORDER BY sequence_number ASC`,
-        jobId,
-        lastSequence
-      );
-
-      for (const ev of historicalEvents) {
-        sendEvent({
-          id: ev.id,
-          eventType: ev.event_type,
-          payload: ev.payload,
-        });
-      }
-
-      // 2. Periodic keepalive comment every 15 seconds
-      const keepAliveInterval = setInterval(() => {
-        try {
-          sendComment('keepalive');
-        } catch {
-          clearInterval(keepAliveInterval);
+    async start(ctl) {
+      req.signal.addEventListener("abort", () => { closed = true; });
+      while (!closed) {
+        const [{ status }] = await q("select status from expansion_jobs where id=$1", [id]);
+        const rows = await q("select sequence_number as s, event_type as t, payload from expansion_events where job_id=$1 and sequence_number>$2 order by sequence_number", [id, last]);
+        for (const r of rows) {
+          last = r.s;
+          ctl.enqueue(enc.encode(`id: ${r.s}\nevent: ${r.t}\ndata: ${JSON.stringify({ sequence: r.s, ...r.payload })}\n\n`));
         }
-      }, 15000);
-
-      // Check if job is already terminal and all events are drained
-      const terminalStatuses = new Set(['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED']);
-      const currentJob = qOne<{ status: string }>(
-        `SELECT status FROM expansion_jobs WHERE id = $1`,
-        jobId
-      );
-
-      if (currentJob && terminalStatuses.has(currentJob.status)) {
-        clearInterval(keepAliveInterval);
-        controller.close();
-        return;
+        if (!rows.length && TERMINAL.includes(status)) break; // terminal and fully drained
+        if (!rows.length) ctl.enqueue(enc.encode(": keepalive\n\n"));
+        await new Promise(r => setTimeout(r, 1000));
       }
-
-      // 3. Subscribe to real-time events
-      const unsubscribe = subscribeToJob(jobId, (event) => {
-        try {
-          sendEvent({
-            id: event.id,
-            eventType: event.eventType,
-            payload: event.payload,
-          });
-
-          if (
-            ['expansion.completed', 'expansion.partial', 'expansion.failed', 'expansion.cancelled'].includes(
-              event.eventType
-            )
-          ) {
-            clearInterval(keepAliveInterval);
-            unsubscribe();
-            controller.close();
-          }
-        } catch {
-          clearInterval(keepAliveInterval);
-          unsubscribe();
-        }
-      });
-
-      // Cleanup on client disconnect
-      req.signal.addEventListener('abort', () => {
-        clearInterval(keepAliveInterval);
-        unsubscribe();
-      });
+      try { ctl.close(); } catch {}
     },
+    cancel() { closed = true; },
   });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-    },
-  });
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" } });
 }
-
