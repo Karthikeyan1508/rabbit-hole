@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { SEED_SQL } from "./seed-data";
 
 // Built-in SQLite (Node 22.5+, no dependency). One synchronous connection: awaits inside a transaction never
 // interleave with other requests unless real I/O is awaited, so tx() below is effectively atomic.
@@ -15,13 +16,9 @@ function open() {
   // Seed demo data if database is empty
   try {
     const count = (db.prepare("select count(*) as c from investigations").all()[0] as any)?.c ?? 0;
-    if (count === 0) {
-      const fs = require("fs");
-      const path = require("path");
-      const seedFile = path.join(__dirname, "seed.sql");
-      if (fs.existsSync(seedFile)) {
-        db.exec(fs.readFileSync(seedFile, "utf8"));
-      }
+    if (count === 0 && SEED_SQL) {
+      db.exec(SEED_SQL);
+      console.log("Auto-seeded database with verified TinyFish investigations");
     }
   } catch (e) {
     console.warn("Auto-seed skipped:", e);
