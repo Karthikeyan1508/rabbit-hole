@@ -19,7 +19,13 @@ const JSON_COLS = ["properties", "budget", "usage", "payload", "value", "error",
 /** Postgres-style `$1` placeholders in, JSON text columns parsed out. */
 export async function q<T = any>(text: string, params: unknown[] = []): Promise<T[]> {
   const db = (g.__db ??= open());
-  const rows = db.prepare(text.replace(/\$(\d+)/g, "?$1")).all(...(params.map(p => p ?? null) as any[]));
+  const actualParams: any[] = [];
+  const sql = text.replace(/\$(\d+)/g, (_, idx) => {
+    const val = params[parseInt(idx, 10) - 1];
+    actualParams.push(val ?? null);
+    return "?";
+  });
+  const rows = db.prepare(sql).all(...actualParams);
   return rows.map(r => {
     const o: any = { ...r };
     for (const k of JSON_COLS) if (typeof o[k] === "string") try { o[k] = JSON.parse(o[k]); } catch { /* plain text */ }
