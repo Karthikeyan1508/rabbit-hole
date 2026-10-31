@@ -30,10 +30,10 @@ export async function PUT(req: Request, { params }: P) {
   return Response.json(await read(id));
 }
 
-/** Check now. */
+/** Check now: runs immediate manual research and posts updates. */
 export async function POST(_: Request, { params }: P) {
   const { id } = await params;
   if (!isUuid(id) || !(await read(id))) return err(404, "NOT_FOUND", "Investigation not found");
-  try { return Response.json({ expansionId: (await check(id)).id }, { status: 202 }); }
+  try { return Response.json({ expansionId: (await check(id, true)).id }, { status: 202 }); }
   catch (e: any) { return err(e.status ?? 503, e.code ?? "WORKER_UNAVAILABLE", e.message); }
 }

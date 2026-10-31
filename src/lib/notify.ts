@@ -10,7 +10,7 @@ export async function notifyWatch(jobId: string) {
   try {
     const [j] = await q(
       `select j.id, j.idempotency_key as k, j.status, j.usage, j.question,
-              i.id as inv_id, i.title, i.root_subject, i.watch_webhook as hook
+              i.id as inv_id, i.title, i.root_subject, i.watch_webhook as hook, i.watch_hours
        from expansion_jobs j 
        join investigations i on i.id=j.investigation_id 
        where j.id=$1`,
@@ -23,9 +23,11 @@ export async function notifyWatch(jobId: string) {
 
     const usage = j.usage ?? {};
     const s = usage.summary ?? {};
+    const isWatch = j.k?.startsWith("watch:");
+    const isManual = j.k?.startsWith("watch:manual:");
 
-    // Only notify if changes, relations, or discoveries happened (or if triggered by watch/monitoring)
-    if (!j.k?.startsWith("watch:") && !s?.newRelations && !s?.conflicts && !s?.newEntities) {
+    // Always alert if this was a manual 'Check now' or scheduled watch run, or if new relations/conflicts were found
+    if (!isWatch && !s?.newRelations && !s?.conflicts && !s?.newEntities) {
       return;
     }
 
@@ -48,16 +50,27 @@ export async function notifyWatch(jobId: string) {
     );
 
     const rootName = j.title || j.root_subject || "Investigation Target";
+    const intervalLabel = isManual
+      ? "Manual Check (Live Update)"
+      : j.watch_hours === 6
+      ? "6-Hour Periodic Scan"
+      : j.watch_hours === 24
+      ? "24-Hour Daily Digest"
+      : `${j.watch_hours}-Hour Watch Cycle`;
 
     // Format relationship bullet lines
     const relLines = discoveries.length
       ? discoveries.map((d: any) => {
           const relation = d.predicate.toLowerCase().replace(/_/g, " ");
           const srcLink = d.source_url ? `<${d.source_url}|${d.publisher || "Source"}>` : "Local Knowledge";
-          const quoteStr = d.excerpt ? `\n> _"${d.excerpt.slice(0, 150)}..."_` : "";
+          const quoteStr = d.excerpt ? `\n> _"${d.excerpt.slice(0, 160)}..."_` : "";
           return `• *${d.subject_label}* ${relation} *${d.object_label}* — ${srcLink}${quoteStr}`;
         })
-      : ["• _Incremental scan completed; no new relations exceeded confidence thresholds._"];
+      : [
+          isManual
+            ? "• _Current facts up to date. No new unverified changes surfaced in this run._"
+            : `• _No new entity changes detected in this ${intervalLabel.toLowerCase()}._`,
+        ];
 
     // Format conflict warnings if any
     const conflicts = await q(
@@ -75,7 +88,7 @@ export async function notifyWatch(jobId: string) {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: `⚠️ *Detected Conflicts (${conflicts.length}):*\n` +
+              text: `⚠️ *Detected Discrepancies / Conflicts (${conflicts.length}):*\n` +
                 conflicts.map((c: any) => `• *${c.pred}*: ${c.reason}`).join("\n"),
             },
           },
@@ -84,13 +97,13 @@ export async function notifyWatch(jobId: string) {
 
     // Assemble Slack Block Kit payload
     const payload = {
-      text: `🔍 RabbitHole Update: ${rootName}`,
+      text: `🔍 [${intervalLabel}] ${rootName} Report`,
       blocks: [
         {
           type: "header",
           text: {
             type: "plain_text",
-            text: `🔍 RabbitHole Intelligence Report: ${rootName}`,
+            text: `🔍 ${rootName} · ${intervalLabel}`,
             emoji: true,
           },
         },
@@ -119,7 +132,7 @@ export async function notifyWatch(jobId: string) {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*Research Objective:*\n"${j.question || 'Continuous automated monitoring'}"`,
+            text: `*Focus Query:*\n_${j.question}_`,
           },
         },
         {
@@ -129,7 +142,7 @@ export async function notifyWatch(jobId: string) {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*Verified Discoveries & Sources:*\n${relLines.join("\n\n")}`,
+            text: `*Evidence-Backed Discoveries:*\n${relLines.join("\n\n")}`,
           },
         },
         ...conflictBlocks,
@@ -138,7 +151,7 @@ export async function notifyWatch(jobId: string) {
           elements: [
             {
               type: "mrkdwn",
-              text: `📊 Research Stats: ${usage.searches ?? 0} searches · ${usage.claimsExtracted ?? 0} extracted · ${usage.claimsAccepted ?? discoveries.length} accepted | RabbitHole Engine`,
+              text: `📊 Research Stats: ${usage.searches ?? 0} searches · ${usage.claimsExtracted ?? 0} extracted · ${usage.claimsAccepted ?? discoveries.length} verified | RabbitHole`,
             },
           ],
         },
