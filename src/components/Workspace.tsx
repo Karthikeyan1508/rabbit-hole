@@ -244,10 +244,21 @@ export default function Workspace() {
   useEffect(() => {
     setEvidence(null); setRecheck(null);
     if (sel?.kind === "edge") {
-      const cid = graph.links.find(l => l.id === sel.id)?.claimId;
-      if (cid) api(`/claims/${cid}/evidence`).then(setEvidence).catch(() => {});
+      const edge = graph.links.find(l => l.id === sel.id);
+      const cid = edge?.claimId;
+      if (cid) {
+        api(`/claims/${cid}/evidence`)
+          .then(setEvidence)
+          .catch((e: any) => {
+            console.error("Failed to load evidence:", e);
+            setEvidence({ sources: [], confidence: null, error: e.message || "Failed to load evidence" });
+          });
+      } else {
+        // Edge has no claim attached (e.g. synthetic or manual link)
+        setEvidence({ sources: [], confidence: null, empty: true });
+      }
     }
-  }, [sel?.kind, sel?.id]);
+  }, [sel?.kind, sel?.id, graph.links]);
 
   const select = (s: Sel) => { setSel(s); setDrawer(null); if (s) setTab("inspect"); };
 
@@ -445,7 +456,12 @@ export default function Workspace() {
                   {evidence?.confidence && <span className={`tag ${evidence.confidence.label === "High" ? "good" : evidence.confidence.label === "Low" ? "warn" : ""}`} style={{ marginLeft: 6 }}>confidence {evidence.confidence.label.toLowerCase()} · {Math.round(evidence.confidence.value * 100)}%</span>}</div>
                 <h3 className="h">Evidence</h3>
                 {!evidence && <p className="muted small">Loading…</p>}
-                {evidence?.sources.map((s: any) => (
+                {evidence && evidence.sources?.length === 0 && (
+                  <p className="muted small">
+                    {evidence.error ? `Could not load evidence (${evidence.error})` : "No evidence recorded for this connection."}
+                  </p>
+                )}
+                {evidence?.sources?.map((s: any) => (
                   <div key={s.sourceId} className="card">
                     <div className="quote">“{s.excerpt}”</div>
                     <a href={s.url} target="_blank" rel="noreferrer">{s.title || hostOf(s.url)} ↗</a>
