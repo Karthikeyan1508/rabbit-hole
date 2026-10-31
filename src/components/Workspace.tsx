@@ -211,8 +211,25 @@ export default function Workspace() {
     catch (e: any) { setErr(e.message); }
     setChecking(false);
   }
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+
   async function decide(item: Review, decision: "accept" | "reject") {
-    try { await api(`/investigations/${invId}/review/${item.id}`, { method: "POST", body: JSON.stringify({ decision }) }); await refresh(invId!, decision === "accept"); } catch (e: any) { setErr(e.message); }
+    if (decidingId === item.id) return;
+    setDecidingId(item.id);
+    // Optimistically remove from review list to prevent duplicate clicks
+    setReview(prev => prev.filter(r => r.id !== item.id));
+    try {
+      await api(`/investigations/${invId}/review/${item.id}`, { method: "POST", body: JSON.stringify({ decision }) });
+      await refresh(invId!, decision === "accept");
+    } catch (e: any) {
+      if (e.message !== "Review item not found") {
+        setErr(e.message);
+        // Restore review items if error was something else
+        api(`/investigations/${invId}/review`).then(setReview).catch(() => {});
+      }
+    } finally {
+      setDecidingId(null);
+    }
   }
   async function mergeNode(keepId: string, mergeId: string) {
     try { await api(`/investigations/${invId}/nodes/merge`, { method: "POST", body: JSON.stringify({ keepId, mergeId }) }); setMergeTo(""); await open(invId!); } catch (e: any) { setErr(e.message); }
@@ -494,7 +511,14 @@ export default function Workspace() {
                   <b>{r.subject} <span style={{ color: "var(--acc)" }}>{r.predicate.toLowerCase().replace(/_/g, " ")}</span> {r.object}</b>
                   <div className="quote" style={{ margin: "12px 0" }}>“{r.excerpt}”</div>
                   <div className="small muted" style={{ marginBottom: 12 }}><a href={r.url} target="_blank" rel="noreferrer">{hostOf(r.url)} ↗</a> <span className="tag warn" style={{ marginLeft: 6 }}>{r.kind}</span></div>
-                  <div className="row" style={{ marginTop: 0 }}><button className="primary" onClick={() => decide(r, "accept")}>Accept</button><button onClick={() => decide(r, "reject")}>Reject</button></div>
+                  <div className="row" style={{ marginTop: 0 }}>
+                    <button className="primary" disabled={decidingId === r.id} onClick={() => decide(r, "accept")}>
+                      {decidingId === r.id ? "Accepting..." : "Accept"}
+                    </button>
+                    <button disabled={decidingId === r.id} onClick={() => decide(r, "reject")}>
+                      Reject
+                    </button>
+                  </div>
                 </div>
               ))}
             </>}
