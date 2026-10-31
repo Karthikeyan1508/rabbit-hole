@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fbfbfd;
+  --foreground: #14213d;
+  --primary-navy: #14213d;
+  --accent-blue: #2457d6;
+  --accent-amber: #d97706;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-familjen), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+/* Consistent 40px controls */
+.control-40 {
+  height: 40px;
+  min-height: 40px;
+  line-height: 40px;
+}
+
